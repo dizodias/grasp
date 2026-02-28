@@ -176,13 +176,14 @@ async def summarize(request: SummarizeRequest) -> SummarizeResponse:
 
     language = (request.language or "EN").strip() or "EN"
 
+    # Placeholder text unique to Grasp—used to detect fallback scenario below
+    PLACEHOLDER_TEXT = (
+        "GRASP_NO_TRANSCRIPT_PLACEHOLDER"
+    )
+
     if not transcript:
-        print(f"[Grasp] No transcript found, using placeholder for Gemini summarization in {language}.", file=sys.stderr, flush=True)
-        transcript = (
-            "Placeholder: No transcript was available for this video. "
-            "The video may have subtitles disabled, or there was a problem fetching the transcript. "
-            "Please summarize this generic placeholder text in the user's requested language."
-        )
+        print(f"[Grasp] No transcript found, using engineering-maturity placeholder for Gemini in {language}.", file=sys.stderr, flush=True)
+        transcript = PLACEHOLDER_TEXT
 
     # Step 3: Summarize with Gemini — explicit API key + debug print
     api_key = os.getenv("GEMINI_API_KEY")
@@ -198,12 +199,24 @@ async def summarize(request: SummarizeRequest) -> SummarizeResponse:
     try:
         def _call_gemini_sync_transcript(transcript: str, api_key: str, lang: str) -> str:
             client = genai.Client(api_key=api_key)
-            prompt = (
-                f"IMPORTANT: You must respond in {lang}. If the transcript is a placeholder, summarize it in {lang} anyway. "
-                f"You are an expert executive assistant. Summarize the following YouTube video transcript. "
-                f"CRITICAL INSTRUCTION: You MUST write the ENTIRE summary in {lang} language. Do not use any other language. "
-                f"Use Markdown formatting, bullet points, and highlight key insights. Transcript: {transcript}"
-            )
+            if transcript == PLACEHOLDER_TEXT:
+                # Custom prompt for demonstration/fallback scenario
+                prompt = (
+                    f"Please respond ONLY in {lang} (not English unless {lang} is English). "
+                    f"You are a Developer Advocate for the open-source Grasp project. "
+                    f"Politely explain, in Markdown, that:\n\n"
+                    f"- ✅ The Grasp UI, Backend, and Gemini AI integration are fully operational.\n"
+                    f"- ❌ However, transcript extraction is blocked on Vercel due to YouTube's anti-bot/datacenter protections against serverless cloud providers.\n"
+                    f"- To see the true summarization magic, instruct the user (in {lang}) to clone Grasp from GitHub and run locally (where transcript extraction works).\n\n"
+                    f"Format the response beautifully in Markdown. Make sure this message is entirely in {lang} — do not mix languages."
+                )
+            else:
+                prompt = (
+                    f"IMPORTANT: You must respond in {lang}. "
+                    f"You are an expert executive assistant. Summarize the following YouTube video transcript. "
+                    f"CRITICAL INSTRUCTION: You MUST write the ENTIRE summary in {lang} language. Do not use any other language. "
+                    f"Use Markdown formatting, bullet points, and highlight key insights. Transcript: {transcript}"
+                )
             response = client.models.generate_content(
                 model=GEMINI_MODEL,
                 contents=prompt,
