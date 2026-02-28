@@ -156,25 +156,32 @@ async def summarize(request: SummarizeRequest) -> SummarizeResponse:
     title, thumbnail = await asyncio.to_thread(fetch_video_metadata, url)
     print("[Grasp] Metadata fetched — title:", (title[:50] + "..." if len(title) > 50 else title) or "(none)", flush=True)
 
-    # Step 2: Fetch transcript (graceful fallback if failure)
+    # Step 2: Fetch transcript (graceful fallback if failure, with logging and language pass-through)
     transcript = None
+    transcript_error_detail = None
     try:
         transcript = await asyncio.to_thread(fetch_transcript_text, video_id)
         print("[Grasp] Transcript fetched. Length:", len(transcript), "chars.", flush=True)
     except (TranscriptsDisabled, NoTranscriptFound, VideoUnavailable) as e:
-        print("[Grasp] WARNING: Transcript error (subtitles unavailable):", type(e).__name__, str(e), flush=True)
+        transcript_error_detail = f"{type(e).__name__}: {str(e)}"
+        print(f"[Grasp] WARNING: Transcript error (subtitles unavailable) [{transcript_error_detail}]", file=sys.stderr, flush=True)
+        # Log details about the error object for diagnosis
+        import traceback
+        traceback.print_exc(file=sys.stderr)
     except Exception as e:
-        print("[Grasp] WARNING: Transcript fetch failed - using mock fallback text:", type(e).__name__, str(e), file=sys.stderr, flush=True)
+        transcript_error_detail = f"{type(e).__name__}: {str(e)}"
+        print(f"[Grasp] WARNING: Transcript fetch failed - using generic fallback text [{transcript_error_detail}]", file=sys.stderr, flush=True)
+        import traceback
+        traceback.print_exc(file=sys.stderr)
+
+    language = (request.language or "EN").strip() or "EN"
 
     if not transcript:
-        print("[Grasp] Proceeding with hardcoded placeholder transcript for Gemini summarization.")
+        print(f"[Grasp] No transcript found, using placeholder for Gemini summarization in {language}.", file=sys.stderr, flush=True)
         transcript = (
-            "In this thought-provoking discussion, we explore the future of artificial intelligence and its transformative impact on society. The panel begins by reflecting on Vibecoding, "
-            "a philosophy that emphasizes intuition, creativity, and deep focus in the practice of coding—qualities that AI may soon augment in profound ways.\n\n"
-            "The conversation delves into how next-generation AI systems, equipped with advanced reasoning and emotional intelligence, could collaborate with humans to design new solutions in health, education, and art. "
-            "As examples are shared, the speakers highlight the importance of ethics and inclusivity, ensuring that the benefits of AI and Vibecoding are accessible to all.\n\n"
-            "Looking ahead, the panelists imagine a world where software development is more creative and human-centered than ever. They discuss the vital role of mindful, intentional coding practices, "
-            "and how embracing both technological progress and human wisdom can lead to a brighter, more harmonious future for everyone.\n"
+            "Placeholder: No transcript was available for this video. "
+            "The video may have subtitles disabled, or there was a problem fetching the transcript. "
+            "Please summarize this generic placeholder text in the user's requested language."
         )
 
     # Step 3: Summarize with Gemini — explicit API key + debug print
@@ -186,14 +193,13 @@ async def summarize(request: SummarizeRequest) -> SummarizeResponse:
             detail="GEMINI_API_KEY is not set in environment variables.",
         )
 
-    language = (request.language or "EN").strip() or "EN"
     print("[Grasp] Summary language requested:", language, flush=True)
 
     try:
-        # define sync inner function for Gemini call
         def _call_gemini_sync_transcript(transcript: str, api_key: str, lang: str) -> str:
             client = genai.Client(api_key=api_key)
             prompt = (
+                f"IMPORTANT: You must respond in {lang}. If the transcript is a placeholder, summarize it in {lang} anyway. "
                 f"You are an expert executive assistant. Summarize the following YouTube video transcript. "
                 f"CRITICAL INSTRUCTION: You MUST write the ENTIRE summary in {lang} language. Do not use any other language. "
                 f"Use Markdown formatting, bullet points, and highlight key insights. Transcript: {transcript}"
@@ -216,6 +222,8 @@ async def summarize(request: SummarizeRequest) -> SummarizeResponse:
         raise HTTPException(status_code=500, detail=str(e)) from None
     except Exception as e:
         print("[Grasp] Gemini call failed:", type(e).__name__, str(e), file=sys.stderr, flush=True)
+        import traceback
+        traceback.print_exc(file=sys.stderr)
         raise HTTPException(
             status_code=500,
             detail="Failed to generate summary with Gemini.",

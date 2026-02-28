@@ -4,12 +4,15 @@ import { ArrowRight, Loader2 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import type { FormEvent } from "react";
 import { useState } from "react";
+import { useLanguage } from "./LanguageContext";
 
 export default function HomePage() {
   const [url, setUrl] = useState("");
   const [loading, setLoading] = useState(false);
   const [summary, setSummary] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  const { language } = useLanguage(); // Use language context at the top
 
   const handleUnderstand = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -23,11 +26,12 @@ export default function HomePage() {
     setLoading(true);
     setError(null);
 
-    // Choose endpoint based on environment
     const endpoint =
       process.env.NODE_ENV === "production"
         ? "/api/summarize"
         : "http://127.0.0.1:8000/api/summarize";
+
+    console.log("Sending language:", language);
 
     try {
       const response = await fetch(endpoint, {
@@ -35,7 +39,7 @@ export default function HomePage() {
         headers: {
           "Content-Type": "application/json"
         },
-        body: JSON.stringify({ url })
+        body: JSON.stringify({ url, language })
       });
 
       const data = await response.json().catch(() => null);
